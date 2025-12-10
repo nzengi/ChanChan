@@ -1,0 +1,10 @@
+# Chan-ZKP Dependencies
+# Zero-Knowledge Proof Demo based on Melody Chan's Group Action Theorem
+
+# Matrix operations, vectors, modular arithmetic
+numpy>=1.21.0
+
+# unittest is built-in, no need to install
+# Optional: For more advanced testing
+# pytest>=7.0.0
+
