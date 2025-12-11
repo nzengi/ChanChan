@@ -307,3 +307,9 @@ Matrix-based zero-knowledge proof system using Melody Chan's theorem. Post-quant
 **Suggested Topics:** `zero-knowledge-proofs`, `zkp`, `cryptography`, `post-quantum-cryptography`, `matrix-cryptography`, `python`, `linear-algebra`
 
 See [GITHUB_SETUP.md](GITHUB_SETUP.md) for complete GitHub setup instructions.
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for guidelines.
+
+Want to earn GitHub achievements? Check out our [Achievements Guide](.github/ACHIEVEMENTS.md)!

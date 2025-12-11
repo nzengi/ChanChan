@@ -1,0 +1,24 @@
+title: "[Idea] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share your ideas for improving Chan-ZKP!
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: Describe your idea
+      placeholder: What's your idea?
+    validations:
+      required: true
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: How would this idea benefit the project?
+      placeholder: What problems does it solve?
+    validations:
+      required: true
+

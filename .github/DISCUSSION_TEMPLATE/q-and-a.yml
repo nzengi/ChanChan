@@ -1,0 +1,22 @@
+title: "[Q&A] "
+labels: ["question", "help"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask questions and get help from the community!
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What's your question?
+      placeholder: Ask your question here...
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide any relevant context
+      placeholder: What have you tried? What are you working on?
+
