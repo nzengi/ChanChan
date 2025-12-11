@@ -184,6 +184,12 @@ def interactive_mode():
     else:
         print(f"({Colors.GREEN}GREEN{Colors.ENDC})")
         print(f"\n  {Colors.YELLOW}⚠ w is GREEN - A different v may be needed for this challenge{Colors.ENDC}")
+
+    # Show blinding details
+    if response.blinded_w_vector is not None and response.blinding_factor is not None:
+        print(f"\n  {Colors.CYAN}Blinding:{Colors.ENDC}")
+        print(f"  Blinding factor r = {response.blinding_factor}")
+        print(f"  Blinded w = r × w mod p = {response.blinded_w_vector}")
     
     # STEP 5: Verification
     print_step(5, "VERIFIER: Verification")

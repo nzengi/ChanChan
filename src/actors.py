@@ -38,8 +38,10 @@ class Challenge:
 @dataclass 
 class Response:
     """Kanıtlayıcının cevabı (response)"""
-    w_vector: np.ndarray  # w = B * v
-    original_v: Optional[np.ndarray] = None  # Demo modunda v'yi de gösterebiliriz
+    w_vector: Optional[np.ndarray] = None  # Unblinded w = B * v (may be omitted in blinded mode)
+    original_v: Optional[np.ndarray] = None  # Demo mode can show v
+    blinded_w_vector: Optional[np.ndarray] = None  # Blinded response r * w (mod p)
+    blinding_factor: Optional[int] = None  # r used for blinding (non-zero mod p)
 
 
 @dataclass
@@ -167,6 +169,10 @@ class Prover:
         
         # w = B * v (mod p)
         w = self.engine.matrix_vector_mult(B, v)
+
+        # Blinding: choose random non-zero factor r and blind w
+        r = int(np.random.randint(1, self.engine.p))  # 1..p-1
+        blinded_w = (r * w) % self.engine.p
         
         # Check the color of the result
         w_color = ColorOracle.get_color_name(w)
@@ -175,6 +181,8 @@ class Prover:
         self._log(f"Multiplication calculated:")
         self._log(f"  v = {v} ({v_color})")
         self._log(f"  w = B*v = {w} ({w_color})")
+        self._log(f"  Blinding factor r = {r}")
+        self._log(f"  Blinded w = r*w mod p = {blinded_w}")
         
         if ColorOracle.is_blue(w):
             self._log(f"✓ Success! w is BLUE - Proof is valid!")
@@ -183,7 +191,9 @@ class Prover:
         
         return Response(
             w_vector=w,
-            original_v=v  # We also return v in demo mode
+            original_v=v,  # We also return v in demo mode
+            blinded_w_vector=blinded_w,
+            blinding_factor=r
         )
     
     def find_valid_green_for_challenge(self, challenge: Challenge, 
@@ -309,12 +319,27 @@ class Verifier:
         
         self._log("Verification starting...")
         
-        w = response.w_vector
         B = self._current_challenge.matrix_B
+
+        # Unblind if needed
+        if response.blinded_w_vector is not None and response.blinding_factor is not None:
+            r = int(response.blinding_factor)
+            r_inv = self.engine._mod_inverse(r, self.engine.p)
+            if r_inv is None:
+                raise ValueError("Invalid blinding factor; inverse does not exist.")
+            w = (response.blinded_w_vector.astype(np.int64) * r_inv) % self.engine.p
+            w = w.astype(np.int64)
+            details_source = "blinded"
+        elif response.w_vector is not None:
+            w = response.w_vector.astype(np.int64)
+            details_source = "unblinded"
+        else:
+            raise ValueError("No response vector provided.")
         
         details = {
             "challenge_id": self._current_challenge.challenge_id,
             "w_vector": w.tolist(),
+            "response_source": details_source,
             "checks_passed": []
         }
         

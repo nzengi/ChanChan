@@ -96,9 +96,16 @@ The protocol follows a standard ZKP pattern:
 
 The beauty is that the verifier learns nothing about v except that you knew a GREEN vector. That's the "zero-knowledge" part.
 
-## Running Tests
+## Security Notes & Blinding
 
-We've got 18 real tests (no mocks, everything uses actual implementations):
+- **Response blinding:** The prover multiplies `w` by a random non-zero scalar `r` (mod p) and sends `r·w` plus `r`. The verifier unblinds using `r^{-1}` mod p. This prevents raw `w` from being sent directly on the wire.
+- **What it protects:** Simple scalar blinding hides the raw response vector from passive observers. It also prevents deterministic replays of `w`.
+- **What it does NOT protect:** A malicious verifier still learns `w` after unblinding (they know `r`). Direction of `w` is not hidden—only scaled. There is no transcript privacy or side-channel hardening. This is a PoC, not a production ZK protocol.
+- **Threat model:** Honest-but-curious verifier, no network adversary altering messages, no timing/power side-channel protections.
+- **Parameters:** The theorem requires prime `p > n + 1`. Current defaults use small demo primes (e.g., p=7). For real security you'd need much larger primes/fields, stronger hashing, formal proofs, and hardened blinding.
+- **Tests:** Blinded verification is covered in the test suite (19 real tests, no mocks).
+
+## Running Tests
 
 ```bash
 python tests/test_chan.py

@@ -225,24 +225,51 @@ class TestVerifier(unittest.TestCase):
     def test_verification_with_valid_proof(self):
         """Verification must succeed with valid proof."""
         prover = Prover(self.engine, verbose=False)
-        
         # Generate challenge first
         challenge = self.verifier.generate_challenge()
         
-        # Find valid GREEN->BLUE pair for this challenge
-        v_valid, w = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
-        prover.secret_v = v_valid
+        # Find valid GREEN->BLUE pair for this challenge (sets secret_v)
+        v_valid, _ = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
         
         # Create commitment with the valid vector
         commitment = prover.commit()
         
-        # Create response
-        response = Response(w_vector=w, original_v=v_valid)
+        # Create blinded response via solve_challenge (includes blinding)
+        response = prover.solve_challenge(challenge)
         
-        # Verify
+        # Verify (must unblind internally)
         result = self.verifier.verify(commitment, response, reveal_v=True)
         
         # Should pass all checks
+        self.assertTrue(result.is_valid)
+        self.assertIn('w_is_blue', result.details['checks_passed'])
+        self.assertIn('v_is_green', result.details['checks_passed'])
+        self.assertIn('commitment_valid', result.details['checks_passed'])
+        self.assertIn('math_valid', result.details['checks_passed'])
+
+    def test_verification_with_blinded_only(self):
+        """Verification must work when only blinded response is sent."""
+        prover = Prover(self.engine, verbose=False)
+        challenge = self.verifier.generate_challenge()
+
+        v_valid, _ = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
+        commitment = prover.commit()
+
+        # Build response manually: blinded only (no plain w_vector)
+        B = challenge.matrix_B
+        w = self.engine.matrix_vector_mult(B, v_valid)
+        r = int(np.random.randint(1, self.engine.p))
+        blinded_w = (r * w) % self.engine.p
+
+        response = Response(
+            w_vector=None,
+            original_v=v_valid,
+            blinded_w_vector=blinded_w,
+            blinding_factor=r
+        )
+
+        result = self.verifier.verify(commitment, response, reveal_v=True)
+
         self.assertTrue(result.is_valid)
         self.assertIn('w_is_blue', result.details['checks_passed'])
         self.assertIn('v_is_green', result.details['checks_passed'])
@@ -324,19 +351,18 @@ class TestFullProtocol(unittest.TestCase):
         self.assertIsNotNone(challenge.matrix_B)
         
         # Step 2: Find valid GREEN->BLUE pair for this challenge
-        v_valid, w = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
+        v_valid, _ = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
         prover.secret_v = v_valid
         self.assertTrue(ColorOracle.is_green(v_valid))
-        self.assertTrue(ColorOracle.is_blue(w))
         
         # Step 3: Create commitment with the valid vector
         commitment = prover.commit()
         self.assertIsNotNone(commitment.hash_value)
         
-        # Step 4: Create response
-        response = Response(w_vector=w, original_v=v_valid)
+        # Step 4: Create blinded response via solve_challenge
+        response = prover.solve_challenge(challenge)
         
-        # Step 5: Verify
+        # Step 5: Verify (with reveal)
         result = verifier.verify(commitment, response, reveal_v=True)
         
         # Must be valid
@@ -352,11 +378,11 @@ class TestFullProtocol(unittest.TestCase):
         # Execute full protocol
         challenge = verifier.generate_challenge()
         
-        v_valid, w = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
+        v_valid, _ = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
         prover.secret_v = v_valid
         
         commitment = prover.commit()
-        response = Response(w_vector=w, original_v=v_valid)
+        response = prover.solve_challenge(challenge)
         result = verifier.verify(commitment, response, reveal_v=True)
         
         self.assertTrue(result.is_valid)
