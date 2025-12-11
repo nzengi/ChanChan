@@ -1,71 +1,73 @@
 """
-Chan-ZKP Matematiksel Çekirdek Modülü
+Chan-ZKP Mathematical Core Module
 
-Bu modül, Melody Chan teoreminin kriptografik uygulaması için
-gerekli matematiksel altyapıyı sağlar.
+This module provides the mathematical foundation for the cryptographic
+application of Melody Chan's theorem.
 
-Sınıflar:
-    - ColorOracle: Vektörleri deterministik olarak Yeşil/Mavi olarak renklendirir
-    - MathEngine: Galois Field üzerinde matris/vektör işlemleri yapar
+Classes:
+    - ColorOracle: Deterministically colors vectors as Green/Blue
+    - MathEngine: Performs matrix/vector operations over Galois Field
 """
 
 import hashlib
 import hmac
-import os
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 from enum import Enum
 
+from .config import get_config
 
 class Color(Enum):
-    """Vektör renk tanımları (Chan Teoremi)"""
-    GREEN = 0  # Yeşil - Gizli vektörler bu renkte olmalı
-    BLUE = 1   # Mavi - Dönüşüm sonucu bu renk olmalı
+    """Vector color definitions (Chan's Theorem)"""
+    GREEN = 0  # Green - Secret vectors must be this color
+    BLUE = 1   # Blue - Transformation result should be this color
 
 
-DEFAULT_COLOR_KEY = b"chan-zkp-color-key"
 COLOR_TAG = b"CHAN-ZKP-COLOR"
 
 
 class ColorOracle:
     """
-    Renk Kehaneti (Color Oracle)
+    Color Oracle
     
-    Bir vektörü SHA-256 hash fonksiyonu kullanarak
-    deterministik olarak Yeşil veya Mavi olarak etiketler.
+    Deterministically labels a vector as Green or Blue using
+    a keyed HMAC-SHA256 hash function.
     
-    Chan Teoremi Bağlamı:
-        - Yeşil vektörler: Kanıtlayıcının seçeceği gizli vektörler
-        - Mavi vektörler: Matris dönüşümü sonrası hedef vektörler
+    Chan's Theorem Context:
+        - Green vectors: Secret vectors chosen by the prover
+        - Blue vectors: Target vectors after matrix transformation
     """
     
     @staticmethod
-    def get_color(vector: np.ndarray, key: bytes = None) -> Color:
+    def get_color(vector: np.ndarray, key: Optional[Union[bytes, str]] = None) -> Color:
         """
-        Bir vektörün rengini belirler.
+        Determines the color of a vector.
         
-        Algoritma:
-            1. Vektörü byte dizisine çevir
-            2. SHA-256 ile hashle
-            3. Hash'in son byte'ının paritesine göre renk belirle
+        Algorithm:
+            1. Convert vector to byte array
+            2. Hash with keyed HMAC-SHA256
+            3. Determine color based on first byte parity
         
         Args:
-            vector: numpy ndarray formatında vektör
+            vector: Vector in numpy ndarray format
+            key: Optional key for HMAC (defaults to env var or default)
             
         Returns:
-            Color.GREEN veya Color.BLUE
+            Color.GREEN or Color.BLUE
         """
-        # Vektörü int64 formatına çevir (tutarlılık için)
+        # Convert vector to int64 format (for consistency)
         vec_normalized = vector.astype(np.int64)
         vec_bytes = vec_normalized.tobytes()
         
-        # Keyed HMAC-SHA256 (daha güvenli ve dengeli)
-        key = key or os.getenv("CHAN_ZKP_COLOR_KEY", DEFAULT_COLOR_KEY)
+        # Keyed HMAC-SHA256 (more secure and balanced)
+        if key is None:
+            config = get_config()
+            key = config.get_color_key()
         key_bytes = key if isinstance(key, (bytes, bytearray)) else str(key).encode()
         # Domain separation/tagging for coloring
         hash_digest = hmac.new(key_bytes, COLOR_TAG + vec_bytes, hashlib.sha256).digest()
         
-        # İlk byte'ın paritesine göre renk (daha dengeli, keyed)
+        # Color based on first byte parity (more balanced, keyed)
         first_byte = hash_digest[0]
         
         if first_byte % 2 == 0:
@@ -75,12 +77,12 @@ class ColorOracle:
     
     @staticmethod
     def is_green(vector: np.ndarray) -> bool:
-        """Vektörün Yeşil olup olmadığını kontrol eder."""
+        """Checks if the vector is Green."""
         return ColorOracle.get_color(vector) == Color.GREEN
     
     @staticmethod
     def is_blue(vector: np.ndarray) -> bool:
-        """Vektörün Mavi olup olmadığını kontrol eder."""
+        """Checks if the vector is Blue."""
         return ColorOracle.get_color(vector) == Color.BLUE
     
     @staticmethod
@@ -92,49 +94,48 @@ class ColorOracle:
 
 class MathEngine:
     """
-    Matematik Motoru
+    Mathematical Engine
     
-    Galois Field (Sonlu Alan) GF(p) üzerinde matris ve vektör
-    işlemlerini gerçekleştirir.
+    Performs matrix and vector operations over Galois Field (Finite Field) GF(p).
     
-    Chan Teoremi için kritik özellikler:
-        - Modüler aritmetik (tüm işlemler mod p)
-        - Non-singular (tekil olmayan) matris üretimi
-        - Matris tersi hesaplama
+    Critical features for Chan's Theorem:
+        - Modular arithmetic (all operations mod p)
+        - Non-singular matrix generation
+        - Matrix inverse computation
     """
     
     def __init__(self, dimension: int, modulus: int):
         """
-        MathEngine başlatıcı.
+        MathEngine initializer.
         
         Args:
-            dimension: Vektör boyutu (n)
-            modulus: Alan modülü (p) - Asal sayı olmalı
+            dimension: Vector dimension (n)
+            modulus: Field modulus (p) - must be prime
             
-        Chan Teoremi Koşulu:
-            |F| > n + 1, yani modulus > dimension + 1
+        Chan's Theorem Condition:
+            |F| > n + 1, i.e., modulus > dimension + 1
         """
         if modulus <= dimension + 1:
             raise ValueError(
-                f"Chan Teoremi koşulu: modulus ({modulus}) > dimension + 1 ({dimension + 1}) olmalı!"
+                f"Chan's Theorem condition: modulus ({modulus}) must be > dimension + 1 ({dimension + 1})!"
             )
         
         self.n = dimension
         self.p = modulus
         
     def random_vector(self) -> np.ndarray:
-        """GF(p) üzerinde rastgele bir n-vektör üretir."""
+        """Generates a random n-vector over GF(p)."""
         return np.random.randint(0, self.p, self.n)
     
     def random_nonsingular_matrix(self, exclude_identity: bool = True) -> np.ndarray:
         """
-        GF(p) üzerinde tekil olmayan (non-singular) bir n×n matris üretir.
+        Generates a non-singular n×n matrix over GF(p).
         
         Args:
-            exclude_identity: True ise birim matris hariç tutulur (Chan Teoremi gereksinimi)
+            exclude_identity: If True, identity matrix is excluded (Chan's Theorem requirement)
             
         Returns:
-            Determinantı 0 olmayan (mod p) matris
+            Matrix with non-zero determinant (mod p)
         """
         max_attempts = 1000
         
@@ -145,27 +146,27 @@ class MathEngine:
             if exclude_identity and np.array_equal(matrix % self.p, np.eye(self.n) % self.p):
                 continue
             
-            # Determinant kontrolü (mod p)
+            # Determinant check (mod p)
             det = self._determinant_mod_p(matrix)
             if det != 0:
                 return matrix
         
-        raise RuntimeError("Non-singular matris üretilemedi!")
+        raise RuntimeError("Failed to generate non-singular matrix!")
     
     def _determinant_mod_p(self, matrix: np.ndarray) -> int:
         """
-        Matrisin determinantını mod p hesaplar.
+        Computes the determinant of a matrix mod p.
         
-        Not: numpy.linalg.det float döndürür ve büyük sayılarda
-        hassasiyet kaybeder. Bu yüzden özel implementasyon kullanıyoruz.
+        Note: numpy.linalg.det returns float and loses precision
+        for large numbers. Therefore, we use a custom implementation.
         """
         n = len(matrix)
         mat = matrix.astype(np.int64) % self.p
         
-        # LU dekompozisyonu benzeri yaklaşım
+        # LU decomposition-like approach
         det = 1
         for col in range(n):
-            # Pivot bulma
+            # Find pivot
             pivot_row = None
             for row in range(col, n):
                 if mat[row, col] % self.p != 0:
@@ -173,18 +174,18 @@ class MathEngine:
                     break
             
             if pivot_row is None:
-                return 0  # Matris singular
+                return 0  # Matrix is singular
             
-            # Satır değişimi
+            # Row swap
             if pivot_row != col:
                 mat[[col, pivot_row]] = mat[[pivot_row, col]]
                 det = (-det) % self.p
             
-            # Pivot elemanı
+            # Pivot element
             pivot = mat[col, col] % self.p
             det = (det * pivot) % self.p
             
-            # Eliminasyon
+            # Elimination
             pivot_inv = self._mod_inverse(pivot, self.p)
             if pivot_inv is None:
                 return 0
@@ -197,50 +198,57 @@ class MathEngine:
     
     def _mod_inverse(self, a: int, p: int) -> Optional[int]:
         """
-        a'nın mod p tersini hesaplar (Extended Euclidean Algorithm).
+        Computes the modular inverse of a mod p (using Fermat's Little Theorem).
         
+        Args:
+            a: Number to invert
+            p: Prime modulus
+            
         Returns:
-            a^(-1) mod p veya None (ters yoksa)
+            a^(-1) mod p or None if inverse doesn't exist
         """
         a = a % p
         if a == 0:
             return None
             
-        # Fermat'ın Küçük Teoremi: a^(p-1) ≡ 1 (mod p) için asal p
-        # Dolayısıyla: a^(-1) ≡ a^(p-2) (mod p)
+        # Fermat's Little Theorem: a^(p-1) ≡ 1 (mod p) for prime p
+        # Therefore: a^(-1) ≡ a^(p-2) (mod p)
         return pow(int(a), p - 2, p)
     
     def matrix_inverse_mod_p(self, matrix: np.ndarray) -> Optional[np.ndarray]:
         """
-        Matrisin mod p tersini hesaplar.
+        Computes the modular inverse of a matrix mod p.
         
+        Args:
+            matrix: Input matrix
+            
         Returns:
-            Ters matris veya None (ters yoksa)
+            Inverse matrix or None if inverse doesn't exist
         """
         n = len(matrix)
         
-        # Augmented matris [A | I]
+        # Augmented matrix [A | I]
         aug = np.zeros((n, 2 * n), dtype=np.int64)
         aug[:, :n] = matrix.astype(np.int64) % self.p
         aug[:, n:] = np.eye(n, dtype=np.int64)
         
-        # Gauss-Jordan eliminasyonu
+        # Gauss-Jordan elimination
         for col in range(n):
-            # Pivot bulma
-            pivot_row = None
+            # Find pivot
+            pivot_row: Optional[int] = None
             for row in range(col, n):
                 if aug[row, col] % self.p != 0:
                     pivot_row = row
                     break
             
             if pivot_row is None:
-                return None  # Matris singular
+                return None  # Matrix is singular
             
-            # Satır değişimi
+            # Row swap
             if pivot_row != col:
                 aug[[col, pivot_row]] = aug[[pivot_row, col]]
             
-            # Pivot'u 1 yap
+            # Make pivot 1
             pivot = aug[col, col] % self.p
             pivot_inv = self._mod_inverse(int(pivot), self.p)
             if pivot_inv is None:
@@ -248,32 +256,37 @@ class MathEngine:
             
             aug[col] = (aug[col] * pivot_inv) % self.p
             
-            # Diğer satırları sıfırla
+            # Zero out other rows
             for row in range(n):
                 if row != col:
                     factor = aug[row, col] % self.p
                     aug[row] = (aug[row] - factor * aug[col]) % self.p
         
-        # Ters matris sağ yarıda
+        # Inverse matrix is in the right half
         inverse = aug[:, n:] % self.p
         return inverse.astype(np.int64)
     
     def matrix_vector_mult(self, matrix: np.ndarray, vector: np.ndarray) -> np.ndarray:
         """
-        Matris-vektör çarpımı (mod p).
+        Matrix-vector multiplication (mod p).
         
-        w = B * v (mod p)
+        Args:
+            matrix: Matrix B
+            vector: Vector v
+            
+        Returns:
+            w = B * v (mod p)
         """
         result = np.dot(matrix.astype(np.int64), vector.astype(np.int64))
         return (result % self.p).astype(np.int64)
     
     def verify_nonsingular(self, matrix: np.ndarray) -> bool:
-        """Matrisin tekil olmadığını doğrular."""
+        """Verifies that the matrix is non-singular."""
         det = self._determinant_mod_p(matrix)
         return det != 0
     
     def is_identity(self, matrix: np.ndarray) -> bool:
-        """Matrisin birim matris olup olmadığını kontrol eder."""
+        """Checks if the matrix is the identity matrix."""
         identity = np.eye(self.n, dtype=np.int64)
         return np.array_equal(matrix.astype(np.int64) % self.p, identity)
 

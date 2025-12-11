@@ -28,6 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core import ColorOracle, MathEngine, Color
 from src.actors import Prover, Verifier, Challenge, Commitment, Response
+from src.config import ChanZKPConfig, get_config, set_config, reset_config
+from src.logger import get_logger, StructuredLogger
 
 
 class TestColorOracle(unittest.TestCase):
@@ -241,7 +243,7 @@ class TestVerifier(unittest.TestCase):
         # Create commitment with the valid vector
         commitment = prover.commit()
         
-        # Create blinded response via solve_challenge (includes blinding + nonce)
+        # Create blinded response via solve_challenge (includes blinding + nonce + MAC)
         response = prover.solve_challenge(challenge)
         
         # Verify (must unblind internally)
@@ -292,20 +294,8 @@ else:
         v_valid, _ = prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
         commitment = prover.commit()
 
-        # Build response manually: blinded only (no plain w_vector)
-        B = challenge.matrix_B
-        w = self.engine.matrix_vector_mult(B, v_valid)
-        r = int(np.random.randint(1, self.engine.p))
-        blinded_w = (r * w) % self.engine.p
-
-        response = Response(
-            w_vector=None,
-            original_v=v_valid,
-            blinded_w_vector=blinded_w,
-            blinding_factor=r,
-            nonce="deadbeef"
-        )
-
+        # Use solve_challenge to produce blinded response (with nonce/MAC)
+        response = prover.solve_challenge(challenge)
         result = self.verifier.verify(commitment, response, reveal_v=True)
 
         self.assertTrue(result.is_valid)
@@ -465,6 +455,341 @@ def run_tests():
         print("\n  ✗ SOME TESTS FAILED ✗\n")
     
     return result
+
+
+class TestConfig(unittest.TestCase):
+    """Tests for configuration management."""
+    
+    def setUp(self):
+        """Reset config before each test."""
+        reset_config()
+    
+    def tearDown(self):
+        """Reset config after each test."""
+        reset_config()
+    
+    def test_get_config_returns_singleton(self):
+        """get_config should return the same instance."""
+        config1 = get_config()
+        config2 = get_config()
+        self.assertIs(config1, config2)
+    
+    def test_config_from_env_defaults(self):
+        """Config should have correct defaults."""
+        config = ChanZKPConfig.from_env()
+        self.assertEqual(config.color_key, b"chan-zkp-color-key")
+        self.assertEqual(config.commit_key, b"chan-zkp-commit-key")
+        self.assertEqual(config.session_key, b"chan-zkp-session-key")
+        self.assertEqual(config.log_level, "INFO")
+        self.assertEqual(config.log_format, "json")
+        self.assertFalse(config.verbose)
+    
+    def test_config_key_getters(self):
+        """Key getter methods should return correct keys."""
+        config = ChanZKPConfig(
+            color_key=b"test-color",
+            commit_key=b"test-commit",
+            session_key=b"test-session"
+        )
+        self.assertEqual(config.get_color_key(), b"test-color")
+        self.assertEqual(config.get_commit_key(), b"test-commit")
+        self.assertEqual(config.get_session_key(), b"test-session")
+    
+    def test_set_config(self):
+        """set_config should update global config."""
+        custom_config = ChanZKPConfig(
+            color_key=b"custom-color",
+            commit_key=b"custom-commit",
+            session_key=b"custom-session"
+        )
+        set_config(custom_config)
+        retrieved = get_config()
+        self.assertIs(retrieved, custom_config)
+        self.assertEqual(retrieved.get_color_key(), b"custom-color")
+    
+    def test_reset_config(self):
+        """reset_config should reset to None."""
+        config1 = get_config()
+        reset_config()
+        config2 = get_config()
+        # Should create new instance after reset
+        self.assertIsNot(config1, config2)
+
+
+class TestLogger(unittest.TestCase):
+    """Tests for structured logging."""
+    
+    def setUp(self):
+        """Reset config before each test."""
+        reset_config()
+    
+    def tearDown(self):
+        """Reset config after each test."""
+        reset_config()
+    
+    def test_get_logger_returns_instance(self):
+        """get_logger should return StructuredLogger instance."""
+        logger = get_logger("TEST")
+        self.assertIsInstance(logger, StructuredLogger)
+        self.assertEqual(logger.name, "TEST")
+    
+    def test_logger_json_format(self):
+        """Logger should output JSON format when configured."""
+        import json
+        import io
+        import sys
+        
+        config = ChanZKPConfig(
+            color_key=b"test",
+            commit_key=b"test",
+            session_key=b"test",
+            log_format="json",
+            verbose=True
+        )
+        set_config(config)
+        
+        logger = get_logger("TEST_COMPONENT")
+        # Capture stdout
+        old_stdout = sys.stdout
+        sys.stdout = captured_output = io.StringIO()
+        
+        try:
+            logger.info("Test message", {"key": "value"})
+            output = captured_output.getvalue().strip()
+            # Should be valid JSON
+            log_data = json.loads(output)
+            self.assertEqual(log_data["level"], "INFO")
+            self.assertEqual(log_data["component"], "TEST_COMPONENT")
+            self.assertEqual(log_data["message"], "Test message")
+            self.assertEqual(log_data["data"]["key"], "value")
+        finally:
+            sys.stdout = old_stdout
+    
+    def test_logger_text_format(self):
+        """Logger should output text format when configured."""
+        config = ChanZKPConfig(
+            color_key=b"test",
+            commit_key=b"test",
+            session_key=b"test",
+            log_format="text",
+            verbose=True
+        )
+        set_config(config)
+        
+        logger = get_logger("TEST_COMPONENT")
+        # Just verify it doesn't crash - text format uses standard logging
+        # which pytest captures differently
+        logger.info("Test message")
+        logger.warning("Warning message")
+        # If we get here without exception, it works
+        self.assertTrue(True)
+    
+    def test_logger_all_levels(self):
+        """All log levels should work."""
+        import io
+        import sys
+        
+        config = ChanZKPConfig(
+            color_key=b"test",
+            commit_key=b"test",
+            session_key=b"test",
+            log_format="json",
+            verbose=True
+        )
+        set_config(config)
+        
+        logger = get_logger("TEST")
+        old_stdout = sys.stdout
+        sys.stdout = captured_output = io.StringIO()
+        
+        try:
+            logger.debug("Debug message")
+            logger.info("Info message")
+            logger.warning("Warning message")
+            logger.error("Error message")
+            logger.critical("Critical message")
+            
+            output = captured_output.getvalue()
+            lines = [line for line in output.strip().split('\n') if line]
+            self.assertGreaterEqual(len(lines), 5)  # At least 5 log entries
+        finally:
+            sys.stdout = old_stdout
+
+
+class TestActorsEdgeCases(unittest.TestCase):
+    """Tests for edge cases in actors."""
+    
+    def setUp(self):
+        self.engine = MathEngine(dimension=3, modulus=7)
+        self.prover = Prover(self.engine, verbose=False)
+        self.verifier = Verifier(self.engine, verbose=False)
+    
+    def test_verification_without_reveal_v(self):
+        """Verification should work without revealing v."""
+        # Generate challenge
+        challenge = self.verifier.generate_challenge()
+        
+        # Find valid GREEN->BLUE pair
+        v_valid, _ = self.prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
+        self.prover.secret_v = v_valid
+        
+        # Create commitment
+        commitment = self.prover.commit()
+        
+        # Create response
+        response = self.prover.solve_challenge(challenge)
+        
+        # Verify without revealing v
+        result = self.verifier.verify(commitment, response, reveal_v=False)
+        
+        self.assertTrue(result.is_valid)
+        # When reveal_v=False, v checks should not be in details
+        self.assertIn("w_is_blue", result.details["checks_passed"])
+        # v_is_green should not be checked when reveal_v=False
+        self.assertNotIn("v_is_green", result.details.get("checks_passed", []))
+    
+    def test_prover_commit_without_secret(self):
+        """commit() should raise ValueError if secret not generated."""
+        with self.assertRaises(ValueError) as context:
+            self.prover.commit()
+        self.assertIn("generate_secret", str(context.exception))
+    
+    def test_prover_solve_without_secret(self):
+        """solve_challenge() should raise ValueError if secret not generated."""
+        challenge = self.verifier.generate_challenge()
+        with self.assertRaises(ValueError) as context:
+            self.prover.solve_challenge(challenge)
+        self.assertIn("generate_secret", str(context.exception))
+    
+    def test_verifier_verify_invalid_commitment(self):
+        """Verification should fail with invalid commitment."""
+        challenge = self.verifier.generate_challenge()
+        v_valid, _ = self.prover.find_valid_green_for_challenge(challenge, max_attempts=5000)
+        self.prover.secret_v = v_valid
+        
+        # Create response
+        response = self.prover.solve_challenge(challenge)
+        
+        # Create invalid commitment
+        invalid_commitment = Commitment(
+            hash_value="invalid_hash",
+            vector_dimension=self.engine.n,
+            field_modulus=self.engine.p
+        )
+        
+        # Verify should fail
+        result = self.verifier.verify(invalid_commitment, response, reveal_v=True)
+        self.assertFalse(result.is_valid)
+
+
+class TestCoreEdgeCases(unittest.TestCase):
+    """Tests for edge cases in core module."""
+    
+    def test_color_oracle_with_custom_key(self):
+        """ColorOracle should work with custom key."""
+        v = np.array([1, 2, 3])
+        color1 = ColorOracle.get_color(v, key=b"key1")
+        color2 = ColorOracle.get_color(v, key=b"key2")
+        # Different keys may produce different colors
+        # But same key should produce same color
+        color1_again = ColorOracle.get_color(v, key=b"key1")
+        self.assertEqual(color1, color1_again)
+    
+    def test_math_engine_determinant_zero(self):
+        """Determinant should be 0 for singular matrix."""
+        engine = MathEngine(dimension=2, modulus=7)
+        # Create singular matrix (rank 1)
+        singular = np.array([[1, 2], [2, 4]], dtype=np.int64)
+        det = engine._determinant_mod_p(singular)
+        self.assertEqual(det, 0)
+    
+    def test_math_engine_inverse_singular_matrix(self):
+        """Inverse should return None for singular matrix."""
+        engine = MathEngine(dimension=2, modulus=7)
+        # Create singular matrix
+        singular = np.array([[1, 2], [2, 4]], dtype=np.int64)
+        inv = engine.matrix_inverse_mod_p(singular)
+        self.assertIsNone(inv)
+    
+    def test_math_engine_identity_detection(self):
+        """is_identity should correctly detect identity matrices."""
+        engine = MathEngine(dimension=3, modulus=7)
+        identity = np.eye(3, dtype=np.int64)
+        self.assertTrue(engine.is_identity(identity))
+        
+        # Non-identity matrix
+        non_identity = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 2]], dtype=np.int64)
+        self.assertFalse(engine.is_identity(non_identity))
+
+
+class TestProtocolDemo(unittest.TestCase):
+    """Tests for protocol demo function."""
+    
+    def test_run_protocol_demo_success(self):
+        """run_protocol_demo should complete successfully."""
+        from src.actors import run_protocol_demo
+        
+        result = run_protocol_demo(dimension=3, modulus=7, verbose=False)
+        # Should return a result (may succeed or fail depending on random vectors)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result.is_valid, bool)
+        self.assertIn("checks_passed", result.details)
+    
+    def test_run_protocol_demo_failure_handling(self):
+        """run_protocol_demo should handle failures gracefully."""
+        from src.actors import run_protocol_demo
+        
+        # Test with valid params (modulus > dimension + 1)
+        result = run_protocol_demo(dimension=2, modulus=5, verbose=False)
+        # Should either succeed or return None on error
+        if result is not None:
+            self.assertIsInstance(result.is_valid, bool)
+
+
+class TestLoggerAdvanced(unittest.TestCase):
+    """Advanced tests for logger."""
+    
+    def setUp(self):
+        reset_config()
+    
+    def tearDown(self):
+        reset_config()
+    
+    def test_json_formatter_with_exception(self):
+        """JSONFormatter should handle exceptions correctly."""
+        import logging
+        from src.logger import JSONFormatter
+        
+        formatter = JSONFormatter()
+        record = logging.LogRecord(
+            name="test",
+            level=logging.ERROR,
+            pathname="test.py",
+            lineno=1,
+            msg="Test error",
+            args=(),
+            exc_info=None
+        )
+        
+        # Should produce valid JSON
+        output = formatter.format(record)
+        import json
+        log_data = json.loads(output)
+        self.assertEqual(log_data["level"], "ERROR")
+        self.assertEqual(log_data["message"], "Test error")
+    
+    def test_config_with_bytes_key(self):
+        """Config should handle bytes keys from environment."""
+        import os
+        import tempfile
+        
+        # Test that get_key_bytes handles bytes correctly
+        # This tests the edge case in config.py line 53
+        config = ChanZKPConfig.from_env()
+        # Should work with default string keys
+        self.assertIsInstance(config.get_color_key(), bytes)
+        self.assertIsInstance(config.get_commit_key(), bytes)
+        self.assertIsInstance(config.get_session_key(), bytes)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,19 @@
+# Development dependencies for Chan-ZKP
+# Install with: pip install -r requirements-dev.txt
+
+# Include runtime dependencies
+-r requirements.txt
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+hypothesis>=6.0.0  # Property-based testing
+
+# Code quality
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# Pre-commit hooks
+pre-commit>=3.0.0
+

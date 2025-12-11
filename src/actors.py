@@ -1,69 +1,72 @@
 """
-Chan-ZKP Protokol Aktörleri Modülü
+Chan-ZKP Protocol Actors Module
 
-Bu modül, Zero-Knowledge Proof protokolünün iki tarafını simüle eder:
-    - Prover (Kanıtlayıcı): Gizli bilginin sahibi
-    - Verifier (Doğrulayıcı): Gizli bilginin varlığını doğrulayan taraf
+This module simulates the two parties of the Zero-Knowledge Proof protocol:
+    - Prover: Owner of secret information
+    - Verifier: Party that verifies the existence of secret information
 
-Protokol Akışı:
-    1. Prover, Yeşil bir vektör (gizli bilgi) üretir
-    2. Prover, bu vektörün commitment'ını (hash) gönderir
-    3. Verifier, rastgele bir challenge (matris B) gönderir
-    4. Prover, B*v işlemini yapar ve sonucu (w) gönderir
-    5. Verifier, w'nin Mavi olduğunu ve matematiksel tutarlılığı doğrular
+Protocol Flow:
+    1. Prover generates a Green vector (secret information)
+    2. Prover sends commitment (hash) of this vector
+    3. Verifier sends a random challenge (matrix B)
+    4. Prover performs B*v operation and sends result (w)
+    5. Verifier verifies that w is Blue and mathematical consistency
 """
 
 import hashlib
 import hmac
-import os
 import secrets
 import numpy as np
 from typing import Tuple, Optional, Dict, Any
 from dataclasses import dataclass
-from .core import ColorOracle, MathEngine, Color, DEFAULT_COLOR_KEY
+from .core import ColorOracle, MathEngine, Color
+from .config import get_config
+from .logger import get_logger
 
-DEFAULT_COMMIT_KEY = b"chan-zkp-commit-key"
 COMMIT_TAG = b"CHAN-ZKP-COMMIT"
+TRANSCRIPT_TAG = b"CHAN-ZKP-TRANSCRIPT"
 
 
 @dataclass
 class Commitment:
-    """Kanıtlayıcının taahhüdü (commitment)"""
-    hash_value: str  # Gizli vektörün SHA-256 hash'i
+    """Prover's commitment"""
+    hash_value: str  # HMAC-SHA256 hash of secret vector
     vector_dimension: int
     field_modulus: int
 
 
 @dataclass
 class Challenge:
-    """Doğrulayıcının zorluğu (challenge)"""
+    """Verifier's challenge"""
     matrix_B: np.ndarray
-    challenge_id: str  # Benzersiz zorluk kimliği
+    challenge_id: str  # Unique challenge identifier
 
 
 @dataclass 
 class Response:
-    """Kanıtlayıcının cevabı (response)"""
+    """Prover's response"""
     w_vector: Optional[np.ndarray] = None  # Unblinded w = B * v (may be omitted in blinded mode)
     original_v: Optional[np.ndarray] = None  # Demo mode can show v
     blinded_w_vector: Optional[np.ndarray] = None  # Blinded response r * w (mod p)
     blinding_factor: Optional[int] = None  # r used for blinding (non-zero mod p)
     nonce: Optional[str] = None  # Session nonce (hex)
+    session_id: Optional[str] = None  # Session binding identifier (hex)
+    transcript_mac: Optional[str] = None  # Integrity/authentication of transcript
 
 
 @dataclass
 class VerificationResult:
-    """Doğrulama sonucu"""
+    """Verification result"""
     is_valid: bool
     details: Dict[str, Any]
 
 
 class Prover:
     """
-    Kanıtlayıcı (Prover)
+    Prover
     
-    Gizli bir Yeşil vektöre sahip olan ve bu vektörün varlığını
-    Doğrulayıcı'ya kanıtlamak isteyen taraf.
+    Party that possesses a secret Green vector and wants to prove
+    its existence to the Verifier.
     
     In the context of Melody Chan's Theorem:
         - Green vector: Secret information (witness)
@@ -83,11 +86,13 @@ class Prover:
         self.verbose = verbose
         self.secret_v: Optional[np.ndarray] = None
         self._commitment: Optional[Commitment] = None
+        self.config = get_config()
+        self.logger = get_logger("PROVER")
         
-    def _log(self, message: str):
-        """Prints message in verbose mode."""
+    def _log(self, message: str, data: Optional[Dict[str, Any]] = None):
+        """Logs message using structured logger."""
         if self.verbose:
-            print(f"  [PROVER] {message}")
+            self.logger.info(message, data)
     
     def generate_secret(self, max_attempts: int = 10000) -> np.ndarray:
         """
@@ -137,9 +142,8 @@ class Prover:
         
         # Hash the vector (keyed) for stronger binding, with domain separation
         vec_bytes = self.secret_v.astype(np.int64).tobytes()
-        commit_key = os.getenv("CHAN_ZKP_COMMIT_KEY", DEFAULT_COMMIT_KEY)
-        key_bytes = commit_key if isinstance(commit_key, (bytes, bytearray)) else str(commit_key).encode()
-        hash_value = hmac.new(key_bytes, COMMIT_TAG + vec_bytes, hashlib.sha256).hexdigest()
+        commit_key = self.config.get_commit_key()
+        hash_value = hmac.new(commit_key, COMMIT_TAG + vec_bytes, hashlib.sha256).hexdigest()
         
         self._commitment = Commitment(
             hash_value=hash_value,
@@ -183,8 +187,17 @@ class Prover:
         r = int(secrets.randbelow(self.engine.p - 1) + 1)  # 1..p-1
         blinded_w = (r * w) % self.engine.p
 
-        # Session nonce for replay protection
-        nonce_bytes = secrets.token_bytes(8)
+        # Session nonce and session_id for replay/binding
+        nonce_bytes = secrets.token_bytes(self.config.nonce_length)
+        session_id_bytes = secrets.token_bytes(self.config.session_id_length)
+
+        # Transcript MAC for integrity/authentication (assumes shared session key)
+        session_key = self.config.get_session_key()
+        B_bytes = B.astype(np.int64).tobytes()
+        blinded_bytes = blinded_w.astype(np.int64).tobytes()
+        commit_hash = self._commitment.hash_value if self._commitment else ""
+        mac_input = TRANSCRIPT_TAG + nonce_bytes + session_id_bytes + B_bytes + blinded_bytes + commit_hash.encode()
+        transcript_mac = hmac.new(session_key, mac_input, hashlib.sha256).hexdigest()
         
         # Check the color of the result
         w_color = ColorOracle.get_color_name(w)
@@ -195,6 +208,8 @@ class Prover:
         self._log(f"  w = B*v = {w} ({w_color})")
         self._log(f"  Blinding factor r = {r}")
         self._log(f"  Blinded w = r*w mod p = {blinded_w}")
+        self._log(f"  Nonce = {nonce_bytes.hex()}")
+        self._log(f"  Session ID = {session_id_bytes.hex()}")
         
         if ColorOracle.is_blue(w):
             self._log(f"✓ Success! w is BLUE - Proof is valid!")
@@ -206,7 +221,9 @@ class Prover:
             original_v=v,  # We also return v in demo mode
             blinded_w_vector=blinded_w,
             blinding_factor=r,
-            nonce=nonce_bytes.hex()
+            nonce=nonce_bytes.hex(),
+            session_id=session_id_bytes.hex(),
+            transcript_mac=transcript_mac
         )
     
     def find_valid_green_for_challenge(self, challenge: Challenge, 
@@ -273,11 +290,13 @@ class Verifier:
         self.engine = math_engine
         self.verbose = verbose
         self._current_challenge: Optional[Challenge] = None
+        self.config = get_config()
+        self.logger = get_logger("VERIFIER")
         
-    def _log(self, message: str):
-        """Prints message in verbose mode."""
+    def _log(self, message: str, data: Optional[Dict[str, Any]] = None):
+        """Logs message using structured logger."""
         if self.verbose:
-            print(f"  [VERIFIER] {message}")
+            self.logger.info(message, data)
     
     def generate_challenge(self) -> Challenge:
         """
@@ -354,8 +373,25 @@ class Verifier:
             "w_vector": w.tolist(),
             "response_source": details_source,
             "nonce": response.nonce,
+            "session_id": response.session_id,
             "checks_passed": []
         }
+
+        # Transcript MAC verification (best-effort; relies on shared session key)
+        if response.transcript_mac:
+            session_key = self.config.get_session_key()
+            B_bytes = B.astype(np.int64).tobytes()
+            blinded_bytes = response.blinded_w_vector.astype(np.int64).tobytes() if response.blinded_w_vector is not None else b""
+            nonce_bytes = bytes.fromhex(response.nonce) if response.nonce else b""
+            session_id_bytes = bytes.fromhex(response.session_id) if response.session_id else b""
+            mac_input = TRANSCRIPT_TAG + nonce_bytes + session_id_bytes + B_bytes + blinded_bytes + commitment.hash_value.encode()
+            expected_mac = hmac.new(session_key, mac_input, hashlib.sha256).hexdigest()
+            mac_ok = hmac.compare_digest(expected_mac, response.transcript_mac)
+            details["transcript_mac_valid"] = mac_ok
+            if mac_ok:
+                details["checks_passed"].append("transcript_mac_valid")
+            else:
+                self._log("  ✗ Transcript MAC invalid!")
         
         # CHECK 1: Is w BLUE?
         w_is_blue = ColorOracle.is_blue(w)
@@ -389,9 +425,8 @@ class Verifier:
             
             # CHECK 3: Commitment verification
             v_bytes = v.astype(np.int64).tobytes()
-            commit_key = os.getenv("CHAN_ZKP_COMMIT_KEY", DEFAULT_COMMIT_KEY)
-            key_bytes = commit_key if isinstance(commit_key, (bytes, bytearray)) else str(commit_key).encode()
-            v_hash = hmac.new(key_bytes, COMMIT_TAG + v_bytes, hashlib.sha256).hexdigest()
+            commit_key = self.config.get_commit_key()
+            v_hash = hmac.new(commit_key, COMMIT_TAG + v_bytes, hashlib.sha256).hexdigest()
             commitment_valid = hmac.compare_digest(v_hash, commitment.hash_value)
             details["commitment_valid"] = commitment_valid
             
@@ -417,12 +452,19 @@ class Verifier:
                 self._log(f"  ✗ B*v = {calculated_w} ≠ w = {w}")
         
         # Result evaluation
-        # In ZKP mode, only w being BLUE is sufficient
-        # In reveal mode, all checks must pass
+        # Required checks
+        required = {
+            "w_is_blue": w_is_blue,
+            "v_is_green": details.get("v_is_green", True) if reveal_v else True,
+            "commitment_valid": details.get("commitment_valid", True) if reveal_v else True,
+            "math_valid": details.get("math_valid", True) if reveal_v else True,
+        }
+        mac_ok = details.get("transcript_mac_valid", True)
+        
         if reveal_v:
-            is_valid = len(details["checks_passed"]) == 4
+            is_valid = all(required.values()) and mac_ok
         else:
-            is_valid = w_is_blue
+            is_valid = w_is_blue and mac_ok
         
         details["final_result"] = "SUCCESSFUL" if is_valid else "FAILED"
         
@@ -435,7 +477,7 @@ class Verifier:
         return VerificationResult(is_valid=is_valid, details=details)
 
 
-def run_protocol_demo(dimension: int = 4, modulus: int = 7, verbose: bool = True):
+def run_protocol_demo(dimension: int = 4, modulus: int = 7, verbose: bool = True) -> Optional[VerificationResult]:
     """
     Runs the full ZKP protocol demo.
     

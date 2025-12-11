@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chan-zkp"
-version = "0.1.0"
+version = "1.0.0"
 description = "Matrix-based zero-knowledge proof system using Melody Chan's theorem."
 readme = "README.md"
 requires-python = ">=3.8"
