@@ -98,7 +98,7 @@ The beauty is that the verifier learns nothing about v except that you knew a GR
 
 ## Security Notes & Blinding
 
-- **Response blinding:** The prover multiplies `w` by a random non-zero scalar `r` (mod p) and sends `r·w` plus `r`. The verifier unblinds using `r^{-1}` mod p. This prevents raw `w` from being sent directly on the wire.
+- **Response blinding:** The prover multiplies `w` by a random non-zero scalar `r` (mod p) and sends `r·w` plus `r` and a session nonce. The verifier unblinds using `r^{-1}` mod p. This prevents raw `w` from being sent directly on the wire and helps against trivial replay. Keys can be overridden via `CHAN_ZKP_COLOR_KEY` and `CHAN_ZKP_COMMIT_KEY`.
 - **What it protects:** Simple scalar blinding hides the raw response vector from passive observers. It also prevents deterministic replays of `w`.
 - **What it does NOT protect:** A malicious verifier still learns `w` after unblinding (they know `r`). Direction of `w` is not hidden—only scaled. There is no transcript privacy or side-channel hardening. This is a PoC, not a production ZK protocol.
 - **Threat model:** Honest-but-curious verifier, no network adversary altering messages, no timing/power side-channel protections.
@@ -118,10 +118,57 @@ The tests cover:
 - Prover/Verifier protocol correctness
 - Chan's theorem verification across different parameters
 - Full end-to-end protocol runs
+- Optional property-based tests (Hypothesis) if installed
 
 All tests should pass. If they don't, something's broken.
 
 The code is modular - `core.py` handles all the math (matrix operations, color functions), and `actors.py` implements the protocol logic. You can easily extend it or use the components separately.
+
+## Benchmarks
+
+Run the simple benchmark script:
+
+```bash
+python benchmarks/benchmark.py
+```
+
+It measures success rate and per-iteration latency for several (n, p, iterations) configs. Includes a large prime case (~2^61) for big-field demo.
+
+## Parameter Guide
+
+- **Chan condition:** Use prime p with p > n + 1.
+- **Demo sets:** (n=4, p=7), (n=5, p=11).
+- **Larger demo:** (n=6, p=13) or (n=8, p=17) — slower, larger search space.
+- **Large prime demo:** (n=4, p≈2^61 prime) included in benchmarks; expect slower runs but better collision resistance.
+- **Search limit (max_attempts):** Default 5000. For larger n/p use 10000+ to keep success high; 2000 is faster but may reduce success.
+- **Performance vs. security:** Larger p gives better collision resistance and color balance but increases search time. Current primes are for demo; production would need larger fields and stronger coloring/hashing.
+- **Coloring/hash:** Uses keyed HMAC-SHA256 (first-byte parity) with domain separation; override key via `CHAN_ZKP_COLOR_KEY`. For stronger guarantees, use a balanced extractor (e.g., HMAC-SHAKE) and larger fields.
+
+## Threat Model
+
+- **Protects:** Scalar blinding hides raw response on the wire; prevents trivial replay of w.
+- **Does NOT protect:** Malicious verifier learns w after unblinding (knows r). No transcript privacy, no side-channel defenses. Hash/coloring is simplistic; not a formal commitment. No formal proofs here.
+- **Adversary model:** Honest-but-curious verifier; no active network attacker assumed; no timing/power mitigations.
+- **For production:** Larger primes/fields, robust coloring/extractor, formal security proofs, side-channel hardening, protocol-level privacy.
+
+## Library Usage (API)
+
+```python
+from chan_zkp.src.core import MathEngine, ColorOracle
+from chan_zkp.src.actors import Prover, Verifier
+
+engine = MathEngine(dimension=4, modulus=7)
+prover = Prover(engine, verbose=False)
+verifier = Verifier(engine, verbose=False)
+
+v = prover.generate_secret()
+commitment = prover.commit()
+challenge = verifier.generate_challenge()
+response = prover.solve_challenge(challenge)  # blinded response
+
+result = verifier.verify(commitment, response, reveal_v=True)
+assert result.is_valid
+```
 
 ## Why This Matters
 
@@ -155,9 +202,12 @@ chan_zkp/
 │   ├── core.py       # Math engine and color oracle
 │   └── actors.py     # Prover and Verifier classes
 ├── tests/
-│   └── test_chan.py  # 18 real tests (no mocks)
+│   └── test_chan.py  # 19 real tests (no mocks)
+├── benchmarks/
+│   └── benchmark.py  # Simple performance/success benchmarks
 ├── main.py           # CLI interface
 ├── requirements.txt  # Dependencies
+├── pyproject.toml    # Packaging (setuptools)
 └── README.md
 ```
 

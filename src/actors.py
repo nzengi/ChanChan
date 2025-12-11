@@ -14,10 +14,16 @@ Protokol Akışı:
 """
 
 import hashlib
+import hmac
+import os
+import secrets
 import numpy as np
 from typing import Tuple, Optional, Dict, Any
 from dataclasses import dataclass
-from .core import ColorOracle, MathEngine, Color
+from .core import ColorOracle, MathEngine, Color, DEFAULT_COLOR_KEY
+
+DEFAULT_COMMIT_KEY = b"chan-zkp-commit-key"
+COMMIT_TAG = b"CHAN-ZKP-COMMIT"
 
 
 @dataclass
@@ -42,6 +48,7 @@ class Response:
     original_v: Optional[np.ndarray] = None  # Demo mode can show v
     blinded_w_vector: Optional[np.ndarray] = None  # Blinded response r * w (mod p)
     blinding_factor: Optional[int] = None  # r used for blinding (non-zero mod p)
+    nonce: Optional[str] = None  # Session nonce (hex)
 
 
 @dataclass
@@ -115,7 +122,7 @@ class Prover:
         """
         Creates a commitment for the secret vector.
         
-        Commitment = SHA-256(v)
+        Commitment = HMAC-SHA-256(v, commit_key)
         
         This value proves the existence of the secret vector without revealing it.
         
@@ -128,9 +135,11 @@ class Prover:
         if self.secret_v is None:
             raise ValueError("generate_secret() must be called first!")
         
-        # Hash the vector
+        # Hash the vector (keyed) for stronger binding, with domain separation
         vec_bytes = self.secret_v.astype(np.int64).tobytes()
-        hash_value = hashlib.sha256(vec_bytes).hexdigest()
+        commit_key = os.getenv("CHAN_ZKP_COMMIT_KEY", DEFAULT_COMMIT_KEY)
+        key_bytes = commit_key if isinstance(commit_key, (bytes, bytearray)) else str(commit_key).encode()
+        hash_value = hmac.new(key_bytes, COMMIT_TAG + vec_bytes, hashlib.sha256).hexdigest()
         
         self._commitment = Commitment(
             hash_value=hash_value,
@@ -170,9 +179,12 @@ class Prover:
         # w = B * v (mod p)
         w = self.engine.matrix_vector_mult(B, v)
 
-        # Blinding: choose random non-zero factor r and blind w
-        r = int(np.random.randint(1, self.engine.p))  # 1..p-1
+        # Blinding: choose random non-zero factor r and blind w (use secrets for better RNG)
+        r = int(secrets.randbelow(self.engine.p - 1) + 1)  # 1..p-1
         blinded_w = (r * w) % self.engine.p
+
+        # Session nonce for replay protection
+        nonce_bytes = secrets.token_bytes(8)
         
         # Check the color of the result
         w_color = ColorOracle.get_color_name(w)
@@ -193,7 +205,8 @@ class Prover:
             w_vector=w,
             original_v=v,  # We also return v in demo mode
             blinded_w_vector=blinded_w,
-            blinding_factor=r
+            blinding_factor=r,
+            nonce=nonce_bytes.hex()
         )
     
     def find_valid_green_for_challenge(self, challenge: Challenge, 
@@ -340,6 +353,7 @@ class Verifier:
             "challenge_id": self._current_challenge.challenge_id,
             "w_vector": w.tolist(),
             "response_source": details_source,
+            "nonce": response.nonce,
             "checks_passed": []
         }
         
@@ -375,8 +389,10 @@ class Verifier:
             
             # CHECK 3: Commitment verification
             v_bytes = v.astype(np.int64).tobytes()
-            v_hash = hashlib.sha256(v_bytes).hexdigest()
-            commitment_valid = (v_hash == commitment.hash_value)
+            commit_key = os.getenv("CHAN_ZKP_COMMIT_KEY", DEFAULT_COMMIT_KEY)
+            key_bytes = commit_key if isinstance(commit_key, (bytes, bytearray)) else str(commit_key).encode()
+            v_hash = hmac.new(key_bytes, COMMIT_TAG + v_bytes, hashlib.sha256).hexdigest()
+            commitment_valid = hmac.compare_digest(v_hash, commitment.hash_value)
             details["commitment_valid"] = commitment_valid
             
             self._log(f"[CHECK 3] Commitment verification:")

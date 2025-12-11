@@ -10,6 +10,8 @@ Sınıflar:
 """
 
 import hashlib
+import hmac
+import os
 import numpy as np
 from typing import Tuple, Optional
 from enum import Enum
@@ -19,6 +21,10 @@ class Color(Enum):
     """Vektör renk tanımları (Chan Teoremi)"""
     GREEN = 0  # Yeşil - Gizli vektörler bu renkte olmalı
     BLUE = 1   # Mavi - Dönüşüm sonucu bu renk olmalı
+
+
+DEFAULT_COLOR_KEY = b"chan-zkp-color-key"
+COLOR_TAG = b"CHAN-ZKP-COLOR"
 
 
 class ColorOracle:
@@ -34,7 +40,7 @@ class ColorOracle:
     """
     
     @staticmethod
-    def get_color(vector: np.ndarray) -> Color:
+    def get_color(vector: np.ndarray, key: bytes = None) -> Color:
         """
         Bir vektörün rengini belirler.
         
@@ -53,14 +59,16 @@ class ColorOracle:
         vec_normalized = vector.astype(np.int64)
         vec_bytes = vec_normalized.tobytes()
         
-        # SHA-256 hash
-        hash_digest = hashlib.sha256(vec_bytes).digest()
+        # Keyed HMAC-SHA256 (daha güvenli ve dengeli)
+        key = key or os.getenv("CHAN_ZKP_COLOR_KEY", DEFAULT_COLOR_KEY)
+        key_bytes = key if isinstance(key, (bytes, bytearray)) else str(key).encode()
+        # Domain separation/tagging for coloring
+        hash_digest = hmac.new(key_bytes, COLOR_TAG + vec_bytes, hashlib.sha256).digest()
         
-        # Son byte'ın paritesine göre renk
-        # Çift sayı -> GREEN, Tek sayı -> BLUE
-        last_byte = hash_digest[-1]
+        # İlk byte'ın paritesine göre renk (daha dengeli, keyed)
+        first_byte = hash_digest[0]
         
-        if last_byte % 2 == 0:
+        if first_byte % 2 == 0:
             return Color.GREEN
         else:
             return Color.BLUE

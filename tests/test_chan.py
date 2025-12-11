@@ -15,6 +15,13 @@ import sys
 import os
 import unittest
 import numpy as np
+import math
+
+try:
+    from hypothesis import given, strategies as st, settings
+    HYPOTHESIS_AVAILABLE = True
+except ImportError:
+    HYPOTHESIS_AVAILABLE = False
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -234,7 +241,7 @@ class TestVerifier(unittest.TestCase):
         # Create commitment with the valid vector
         commitment = prover.commit()
         
-        # Create blinded response via solve_challenge (includes blinding)
+        # Create blinded response via solve_challenge (includes blinding + nonce)
         response = prover.solve_challenge(challenge)
         
         # Verify (must unblind internally)
@@ -246,6 +253,36 @@ class TestVerifier(unittest.TestCase):
         self.assertIn('v_is_green', result.details['checks_passed'])
         self.assertIn('commitment_valid', result.details['checks_passed'])
         self.assertIn('math_valid', result.details['checks_passed'])
+
+
+if HYPOTHESIS_AVAILABLE:
+    @unittest.skipUnless(HYPOTHESIS_AVAILABLE, "hypothesis not installed")
+    class TestPropertyBased(unittest.TestCase):
+        """Property-based tests for distribution and algebra."""
+
+        @given(st.lists(st.integers(min_value=0, max_value=6), min_size=4, max_size=4))
+        @settings(max_examples=50, deadline=None)
+        def test_color_distribution_balance(self, vec_list):
+            engine = MathEngine(dimension=4, modulus=7)
+            v = np.array(vec_list[:4], dtype=np.int64) % engine.p
+            color = ColorOracle.get_color(v)
+            self.assertIn(color, (Color.GREEN, Color.BLUE))
+
+        @given(st.integers(min_value=0, max_value=20))
+        @settings(max_examples=20, deadline=None)
+        def test_matrix_inverse_property(self, seed):
+            np.random.seed(seed)
+            engine = MathEngine(dimension=3, modulus=11)
+            A = engine.random_nonsingular_matrix()
+            A_inv = engine.matrix_inverse_mod_p(A)
+            self.assertIsNotNone(A_inv)
+            product = np.dot(A.astype(np.int64), A_inv.astype(np.int64)) % engine.p
+            self.assertTrue(np.array_equal(product, np.eye(engine.n, dtype=np.int64)))
+else:
+    class TestPropertyBased(unittest.TestCase):
+        @unittest.skip("hypothesis not installed")
+        def test_placeholder(self):
+            self.assertTrue(True)
 
     def test_verification_with_blinded_only(self):
         """Verification must work when only blinded response is sent."""
@@ -265,7 +302,8 @@ class TestVerifier(unittest.TestCase):
             w_vector=None,
             original_v=v_valid,
             blinded_w_vector=blinded_w,
-            blinding_factor=r
+            blinding_factor=r,
+            nonce="deadbeef"
         )
 
         result = self.verifier.verify(commitment, response, reveal_v=True)

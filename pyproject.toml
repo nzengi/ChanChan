@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chan-zkp"
+version = "0.1.0"
+description = "Matrix-based zero-knowledge proof system using Melody Chan's theorem."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  { name = "Chan-ZKP Demo Project" }
+]
+dependencies = [
+  "numpy>=1.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/nzengi/ChanChan"
+
+[tool.setuptools]
+packages = ["chan_zkp", "chan_zkp.src", "chan_zkp.tests", "chan_zkp.benchmarks"]
+
+[project.scripts]
+chan-zkp-demo = "main:main_menu"
+
