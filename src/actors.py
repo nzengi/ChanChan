@@ -538,7 +538,7 @@ def run_protocol_demo(dimension: int = 4, modulus: int = 7, verbose: bool = True
     return result
 
 
-# Test için çalıştır
+# Test
 if __name__ == "__main__":
     run_protocol_demo(dimension=4, modulus=7)
 

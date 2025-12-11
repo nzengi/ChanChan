@@ -142,7 +142,7 @@ class MathEngine:
         for _ in range(max_attempts):
             matrix = np.random.randint(0, self.p, (self.n, self.n))
             
-            # Birim matris kontrolü
+            # Identity matrix check
             if exclude_identity and np.array_equal(matrix % self.p, np.eye(self.n) % self.p):
                 continue
             
@@ -291,38 +291,38 @@ class MathEngine:
         return np.array_equal(matrix.astype(np.int64) % self.p, identity)
 
 
-# Test için basit bir demo
+# Simple demo for testing
 if __name__ == "__main__":
     print("=" * 60)
-    print("Chan-ZKP Matematik Motoru Demo")
+    print("Chan-ZKP Mathematical Engine Demo")
     print("=" * 60)
     
-    # Parametreler: n=4, p=7 (Chan'ın orijinal örneği)
+    # Parameters: n=4, p=7 (Chan's original example)
     engine = MathEngine(dimension=4, modulus=7)
     
-    print(f"\nParametreler: n={engine.n}, p={engine.p} (GF({engine.p}))")
+    print(f"\nParameters: n={engine.n}, p={engine.p} (GF({engine.p}))")
     print("-" * 40)
     
-    # Rastgele vektör üret ve rengini kontrol et
-    print("\n[1] Rastgele Vektör Üretimi ve Renklendirme:")
+    # Generate random vector and check its color
+    print("\n[1] Random Vector Generation and Coloring:")
     for i in range(5):
         v = engine.random_vector()
         color = ColorOracle.get_color_name(v)
         print(f"    v{i+1} = {v} -> {color}")
     
-    # Non-singular matris üret
-    print("\n[2] Non-singular Matris Üretimi:")
+    # Generate non-singular matrix
+    print("\n[2] Non-singular Matrix Generation:")
     B = engine.random_nonsingular_matrix()
     print(f"    B =\n{B}")
     print(f"    det(B) mod {engine.p} = {engine._determinant_mod_p(B)}")
     
-    # Matris-vektör çarpımı
-    print("\n[3] Matris-Vektör Çarpımı:")
+    # Matrix-vector multiplication
+    print("\n[3] Matrix-Vector Multiplication:")
     v = engine.random_vector()
     w = engine.matrix_vector_mult(B, v)
     print(f"    v = {v} ({ColorOracle.get_color_name(v)})")
     print(f"    w = B*v = {w} ({ColorOracle.get_color_name(w)})")
     
     print("\n" + "=" * 60)
-    print("Demo tamamlandı!")
+    print("Demo completed!")
 
